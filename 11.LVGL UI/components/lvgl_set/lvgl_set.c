@@ -18,6 +18,7 @@ void lvgl_init(lcd_dev_t *lcd_dev, touch_dev_t *touch_dev)
     // 3. 注册触摸输入设备
     esp_lv_adapter_touch_config_t touch_cfg =
         ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch_dev->handle);
+    touch_cfg.callbacks.custom_touch_read = touch_read_calibrated; // 自定义读取,叠加触摸校准偏移
     esp_lv_adapter_register_touch(&touch_cfg);
 
     // 4. 启动适配器任务

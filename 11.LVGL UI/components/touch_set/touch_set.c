@@ -64,3 +64,28 @@ bool touch_read(touch_dev_t *data)
     }
     return false;
 }
+
+// 自定义触摸读取:驱动算出坐标(含镜像/翻转)后,叠加校准偏移和缩放。
+// 传给 esp_lvgl_adapter 的 touch_cfg.callbacks.custom_touch_read。
+esp_err_t touch_read_calibrated(esp_lcd_touch_handle_t handle,
+                                esp_lcd_touch_point_data_t *points,
+                                uint8_t *count, uint8_t max_count, void *user_ctx)
+{
+    esp_lcd_touch_read_data(handle);
+    esp_err_t ret = esp_lcd_touch_get_data(handle, points, count, max_count);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    for (uint8_t i = 0; i < *count; i++) {
+        int x = (int)((float)points[i].x * TOUCH_CAL_SCALE_X + TOUCH_CAL_OFFSET_X);
+        int y = (int)((float)points[i].y * TOUCH_CAL_SCALE_Y + TOUCH_CAL_OFFSET_Y);
+        if (x < 0) x = 0;
+        if (x > TOUCH_WIDTH) x = TOUCH_WIDTH;
+        if (y < 0) y = 0;
+        if (y > TOUCH_HEIGHT) y = TOUCH_HEIGHT;
+        points[i].x = (uint16_t)x;
+        points[i].y = (uint16_t)y;
+    }
+    return ESP_OK;
+}

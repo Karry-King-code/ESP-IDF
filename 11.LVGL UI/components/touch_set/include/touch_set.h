@@ -18,6 +18,14 @@
 #define TOUCH_WIDTH     320
 #define TOUCH_HEIGHT    240
 
+// ===== 触摸校准(手调参数)=====
+// 现象:点按钮中心没反应,要点按钮的右上角才触发 → 判定点整体偏左下。
+// 修法:把判定点向右、向上平移。屏幕坐标 y 轴向下为正,所以"上移"是减 y。
+#define TOUCH_CAL_OFFSET_X   60 //判定点右移像素数(正=右)
+#define TOUCH_CAL_OFFSET_Y   -60 //判定点上移像素数(负=上)
+#define TOUCH_CAL_SCALE_X    1.0f    // 水平缩放(边缘不准时再调,中心不准不用管)
+#define TOUCH_CAL_SCALE_Y    1.0f    // 垂直缩放
+
 // 触摸设备结构体
 typedef struct {
     uint16_t x;
@@ -41,5 +49,14 @@ void touch_init(touch_dev_t *dev);
 * @return false 读取失败
 */
 bool touch_read(touch_dev_t *data);
+
+/**
+ * @brief 自定义触摸读取(带校准偏移),给 esp_lvgl_adapter 用
+ *
+ * @return esp_err_t
+ */
+esp_err_t touch_read_calibrated(esp_lcd_touch_handle_t handle,
+                                esp_lcd_touch_point_data_t *points,
+                                uint8_t *count, uint8_t max_count, void *user_ctx);
 
 #endif /* TOUCH_SET_H */
