@@ -6,6 +6,7 @@ void lvgl_init(lcd_dev_t *lcd_dev, touch_dev_t *touch_dev)
 {
     // 1. 初始化 LVGL 适配器
     esp_lv_adapter_config_t cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+    cfg.task_core_id = 1;   // LVGL 渲染任务绑 core 1,远离 WiFi 的 core 0,治连网后卡顿
     esp_lv_adapter_init(&cfg);
 
     // 2. 注册显示设备（SPI 接口 + PSRAM）
