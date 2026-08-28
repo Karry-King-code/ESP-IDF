@@ -1,20 +1,21 @@
-#include <stdio.h>           
+#include <stdio.h>
+#include "esp_log.h"
 #include "xiaozhi_set.h"
-#include "task_set.h"      //要用全局app
-#include "esp_lv_adapter.h"//要用ui锁
-#include "ui.h"            //要用屏幕控件(文本框/开关)
+#include "task_set.h"
+#include "esp_lv_adapter.h"
+#include "ui.h"
 
-static i2s_chan_handle_t pdm_rx_chan = NULL;//麦克风 I2S 通道句柄
-static esp_xiaozhi_chat_handle_t chat_hd = 0;//小智对话句柄(身份证)
-static audio_stream_handle_t tts_stream = NULL;//TTS输出流句柄(喇叭)
-static OpusDecoder *opus_dec = NULL;//opus解码器
-static int16_t *opus_buf = NULL;//解码缓冲(PSRAM)
-static int16_t *out_buf = NULL;//转换缓冲(PSRAM)
+static i2s_chan_handle_t pdm_rx_chan = NULL;
+static esp_xiaozhi_chat_handle_t chat_hd = 0;
+static audio_stream_handle_t tts_stream = NULL;
+static OpusDecoder *opus_dec = NULL;
+static int16_t *opus_buf = NULL;
+static int16_t *out_buf = NULL;
 static esp_xiaozhi_chat_audio_t pcm_params = {
-    .format = "opus",//用OPUS压缩格式(服务器下发与解码器一致)
-    .sample_rate = 48000,//48khz采样率
-    .channels = 1,
-    .frame_duration = 60,//每帧60ms
+    .format = "pcm",
+    .sample_rate = 48000,
+    .channels = 2,
+    .frame_duration = 60,
 };
 
 // 对话事件回调：显示对话文本，TTS 结束后自动重新监听
@@ -49,30 +50,30 @@ static void xiaozhi_chat_event(esp_xiaozhi_chat_event_t event, void *event_data,
     }
 }
 
-// 连接事件回调：打开音频通道、发送唤醒词、处理断开   base是组 id是具体事件
+// 连接事件回调：打开音频通道、发送唤醒词、处理断开
 static void xiaozhi_connect_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    if (base != ESP_XIAOZHI_CHAT_EVENTS) return;//检查是不是小智这一组事件 不是就返回
+    if (base != ESP_XIAOZHI_CHAT_EVENTS) return;
 
     switch (id) {
         case ESP_XIAOZHI_CHAT_EVENT_CONNECTED:
-            esp_xiaozhi_chat_open_audio_channel(chat_hd, &pcm_params, NULL, 0);//开音频通道
+            esp_xiaozhi_chat_open_audio_channel(chat_hd, &pcm_params, NULL, 0);
             break;
         case ESP_XIAOZHI_CHAT_EVENT_DISCONNECTED:
-            if (app.xiaozhi.xiaozhi_status == 3) {//在对话就停止
+            if (app.xiaozhi.xiaozhi_status == 3) {
                 esp_xiaozhi_chat_stop(chat_hd);
             }
             if (esp_lv_adapter_lock(-1) == ESP_OK) {
-                lv_obj_clear_state(ui_SwitchXiaoZhiSpeak, LV_STATE_CHECKED);//开关取消勾选
-                lv_label_set_text(ui_LabelXiaoZhiSpeak, "OFF");//标签回off
+                lv_obj_clear_state(ui_SwitchXiaoZhiSpeak, LV_STATE_CHECKED);
+                lv_label_set_text(ui_LabelXiaoZhiSpeak, "OFF");
                 esp_lv_adapter_unlock();
             }
-            app.xiaozhi.xiaozhi_status = 0;//状态回到空闲
+            app.xiaozhi.xiaozhi_status = 0;
             break;
-        case ESP_XIAOZHI_CHAT_EVENT_AUDIO_CHANNEL_OPENED://音频通道真开好了
-            esp_xiaozhi_chat_send_wake_word(chat_hd, "你好小智");//发唤醒词
+        case ESP_XIAOZHI_CHAT_EVENT_AUDIO_CHANNEL_OPENED:
+            esp_xiaozhi_chat_send_wake_word(chat_hd, "你好小智");
             esp_xiaozhi_chat_send_start_listening(chat_hd, ESP_XIAOZHI_CHAT_LISTENING_MODE_AUTO);
-            app.xiaozhi.xiaozhi_status = 3; // 状态→对话中
+            app.xiaozhi.xiaozhi_status = 3;
             break;
     }
 }
@@ -83,14 +84,24 @@ static void xiaozhi_audio_event(const uint8_t *data, int len, void *ctx)
     if (!tts_stream || !data || len <= 0) return;
     if (!opus_dec) {
         int err;
-        opus_dec = opus_decoder_create(48000, 1, &err);//48khz 单声道解码器
+        opus_dec = opus_decoder_create(48000, 1, &err);
         if (!opus_dec) return;
-        opus_buf = heap_caps_malloc(5760 * 2, MALLOC_CAP_SPIRAM);//解码后的PCM缓冲
-        out_buf = heap_caps_malloc(5760 * 4, MALLOC_CAP_SPIRAM);// 重采样后的立体声缓冲
+        opus_buf = heap_caps_malloc(5760 * 2, MALLOC_CAP_SPIRAM);
+        out_buf = heap_caps_malloc(5760 * 4, MALLOC_CAP_SPIRAM);
     }
     if (!opus_buf || !out_buf) return;
 
+    // XZDBG: 诊断下行音频。仅打印前 20 帧,不改任何逻辑
+    static int xzdbg_cnt = 0;
+    if (xzdbg_cnt < 20) {
+        ESP_LOGI("XZDBG", "audio_cb len=%d hdr=%02x %02x %02x %02x", len,
+                 data[0], data[1], data[2], data[3]);
+    }
+
     int n = opus_decode(opus_dec, data, len, opus_buf, 5760, 0);
+    if (xzdbg_cnt < 20) {
+        ESP_LOGI("XZDBG", "opus_decode n=%d (dec=48k)", n);
+    }
     if (n <= 0) return;
 
     int out_n = 0;
@@ -100,6 +111,10 @@ static void xiaozhi_audio_event(const uint8_t *data, int len, void *ctx)
             out_buf[out_n * 2] = out_buf[out_n * 2 + 1] = opus_buf[i];
             out_n++;
         }
+    }
+    if (xzdbg_cnt < 20) {
+        ESP_LOGI("XZDBG", "resample in=%d out=%d (48k->44.1k)", n, out_n);
+        xzdbg_cnt++;
     }
     audio_stream_write_pcm(tts_stream, out_buf, out_n * 4, pdMS_TO_TICKS(100));
 }
