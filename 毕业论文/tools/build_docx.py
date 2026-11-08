@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """把 content/*.md 渲染成符合中文学位论文排版习惯的 .docx。
 
 Markdown 方言（只支持本文件用到的子集）：
@@ -19,7 +19,7 @@ import re
 
 from docx import Document
 from docx.enum.section import WD_SECTION
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -158,16 +158,19 @@ def add_page_number_footer(section):
     run._element.addnext(fld)
 
 
-def page_setup(doc):
+def page_setup(doc, kind="proposal"):
     s = doc.sections[0]
     s.page_width, s.page_height = Cm(21), Cm(29.7)
     s.top_margin, s.bottom_margin = Cm(2.54), Cm(2.54)
-    s.left_margin, s.right_margin = Cm(3.0), Cm(2.6)
+    if kind == "tasktemplate":
+        s.left_margin, s.right_margin = Cm(2.5), Cm(2.3)
+    else:
+        s.left_margin, s.right_margin = Cm(3.0), Cm(2.6)
 
 
-def new_doc():
+def new_doc(kind="proposal"):
     doc = Document()
-    page_setup(doc)
+    page_setup(doc, kind)
     st = doc.styles["Normal"]
     st.font.name = TIMES
     st.font.size = Pt(12)
@@ -182,7 +185,68 @@ def pagebreak(doc):
 
 
 # ----------------------------------------------------------------- 封面
+def task_template_head(doc, meta):
+    """学校任务书模板头：居中标题 + 四行带框线信息表。"""
+    p = doc.add_paragraph()
+    fmt_para(p, 0, 6, 10, 1.0, WD_ALIGN_PARAGRAPH.CENTER)
+    r = p.add_run("广州南方学院毕业论文（设计）任务书")
+    set_run(r, HEI, 18, True)
+
+    rows = [
+        ("毕业论文（设计）题目", meta["title"], None, None),
+        ("学生姓名", meta["name"], "学号", meta["sid"]),
+        ("学院", meta["college"], "专业", meta["major"]),
+        ("指导教师", meta["teacher"], "职称", meta["rank"]),
+    ]
+    widths = [Cm(5.2), Cm(3.6), Cm(2.0), Cm(5.4)]
+    table = doc.add_table(rows=len(rows), cols=4)
+    table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _fixed_layout(table)
+    for ci in range(4):
+        table.columns[ci].width = widths[ci]
+    _table_borders(table)
+
+    # 第一行：题目列合并后三个单元格
+    table.cell(0, 1).merge(table.cell(0, 3))
+
+    for ri, row in enumerate(rows):
+        table.rows[ri].height = Cm(1.0)
+        table.rows[ri].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+        for ci, val in enumerate(row):
+            if val is None:
+                continue
+            cell = table.cell(ri, ci)
+            cell.width = widths[ci] if ri == 0 and ci == 0 else Cm(3.9)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            cell.text = ""
+            p = cell.paragraphs[0]
+            fmt_para(p, 0, 2, 2, 1.0,
+                     WD_ALIGN_PARAGRAPH.LEFT if ri == 0 and ci == 1 else WD_ALIGN_PARAGRAPH.CENTER)
+            r = p.add_run(val)
+            set_run(r, SONG, 12)
+
+    p = doc.add_paragraph()
+    fmt_para(p, 0, 0, 6, 1.0)
+
+
+def _table_borders(table, sz=8):
+    tblPr = table._tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), str(sz))
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), "000000")
+        borders.append(el)
+    tblPr.append(borders)
+
+
 def cover(doc, kind, meta):
+    if kind == "tasktemplate":
+        task_template_head(doc, meta)
+        return
     if kind == "task":
         # 顶部单位名
         p = doc.add_paragraph()
@@ -312,6 +376,22 @@ def render_md(doc, md_text):
         if line.startswith("[TW:"):
             pending_w = [float(x) for x in line[4:-1].split(",")]
             continue
+        if line.startswith("[H1C]"):
+            p = add_para(doc, line[5:].strip(), first_indent=0, before=8, after=4,
+                         align=WD_ALIGN_PARAGRAPH.CENTER)
+            for r in p.runs:
+                r.bold = True
+            continue
+        if line.startswith("[SUB]"):
+            add_para(doc, line[5:].strip(), first_indent=0, before=6, after=0,
+                     align=WD_ALIGN_PARAGRAPH.LEFT)
+            continue
+        if line.startswith("[RED]"):
+            p = add_para(doc, line[5:].strip(), size=10.5, first_indent=21, before=0, after=0,
+                         align=WD_ALIGN_PARAGRAPH.LEFT)
+            for r in p.runs:
+                r.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
+            continue
         if line.startswith("[TCAP:"):
             add_caption(doc, line[6:-1].strip(), before=6, after=2)
             continue
@@ -348,6 +428,11 @@ def render_md(doc, md_text):
             add_image(doc, os.path.join(ROOT, path.strip()), float(width))
             add_caption(doc, capt.strip())
             continue
+        if line.startswith("[RIND]"):
+            p = add_para(doc, line[6:].strip(), first_indent=0,
+                         align=WD_ALIGN_PARAGRAPH.LEFT)
+            p.paragraph_format.left_indent = Cm(7.6)
+            continue
         if line.startswith("[RIGHT]"):
             add_para(doc, line[7:].strip(), first_indent=0,
                      align=WD_ALIGN_PARAGRAPH.RIGHT)
@@ -379,7 +464,7 @@ def render_md(doc, md_text):
             fmt_para(p, 0, 0, 6, 1.0)
             continue
         if re.match(r"^\[\d+\]", line):
-            p = add_para(doc, line, size=10.5, first_indent=0, line=1.25,
+            p = add_para(doc, line, size=10.5, first_indent=0, line=1.05,
                          align=WD_ALIGN_PARAGRAPH.LEFT)
             p.paragraph_format.left_indent = Pt(0)
             continue
@@ -398,7 +483,7 @@ def render_md(doc, md_text):
 
 
 def build(md_name, docx_name, kind, meta, footer=True):
-    doc = new_doc()
+    doc = new_doc(kind)
     if footer:
         add_page_number_footer(doc.sections[0])
     cover(doc, kind, meta)
@@ -422,5 +507,5 @@ META = {
 META2 = dict(META, date="2026年11月16日")
 
 if __name__ == "__main__":
-    build("taskbook.md", "1.2320158058_姚凯锐_任务书.docx", "task", META)
+    build("taskbook.md", "1.2320158058_姚凯锐_任务书.docx", "tasktemplate", META)
     build("proposal.md", "2.2320158058_姚凯锐_开题报告.docx", "proposal", META2)
