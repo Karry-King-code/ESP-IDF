@@ -107,9 +107,11 @@ def add_heading(doc, text, level=1):
     return p
 
 
-def add_caption(doc, text, before=6, after=12):
+def add_caption(doc, text, before=6, after=12, keep_next=False):
     p = doc.add_paragraph()
     fmt_para(p, 0, before, after, 1.0, WD_ALIGN_PARAGRAPH.CENTER)
+    if keep_next:
+        p.paragraph_format.keep_with_next = True
     run = p.add_run(text)
     set_run(run, SONG, 10.5, False)
 
@@ -142,8 +144,16 @@ def add_table(doc, rows, font_size=9.5, widths=None):
             txt = row[ci] if ci < len(row) else ""
             run = p.add_run(txt)
             set_run(run, SONG, font_size, ri == 0)
+            p.paragraph_format.keep_with_next = True
             if widths and ci < len(widths):
                 cell.width = Cm(widths[ci])
+    for ri, row in enumerate(table.rows):
+        trPr = row._tr.get_or_add_trPr()
+        cant = OxmlElement("w:cantSplit")
+        trPr.append(cant)
+        if ri == 0:
+            hdr = OxmlElement("w:tblHeader")
+            trPr.append(hdr)
     return table
 
 
@@ -393,7 +403,7 @@ def render_md(doc, md_text):
                 r.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
             continue
         if line.startswith("[TCAP:"):
-            add_caption(doc, line[6:-1].strip(), before=6, after=2)
+            add_caption(doc, line[6:-1].strip(), before=6, after=2, keep_next=True)
             continue
         if line.startswith("[SIGN:"):
             label, date = line[6:-1].split("|", 1)
@@ -429,7 +439,7 @@ def render_md(doc, md_text):
             add_caption(doc, capt.strip())
             continue
         if line.startswith("[RIND]"):
-            p = add_para(doc, line[6:].strip(), first_indent=0,
+            p = add_para(doc, line[6:].strip(), first_indent=0, before=4,
                          align=WD_ALIGN_PARAGRAPH.LEFT)
             p.paragraph_format.left_indent = Cm(7.6)
             continue
@@ -464,7 +474,7 @@ def render_md(doc, md_text):
             fmt_para(p, 0, 0, 6, 1.0)
             continue
         if re.match(r"^\[\d+\]", line):
-            p = add_para(doc, line, size=10.5, first_indent=0, line=1.05,
+            p = add_para(doc, line, size=10, first_indent=0, line=1.0,
                          align=WD_ALIGN_PARAGRAPH.LEFT)
             p.paragraph_format.left_indent = Pt(0)
             continue
@@ -490,6 +500,7 @@ def build(md_name, docx_name, kind, meta, footer=True):
     with open(os.path.join(CONTENT, md_name), encoding="utf-8") as f:
         render_md(doc, f.read())
     out = os.path.join(ROOT, docx_name)
+    os.makedirs(os.path.dirname(out) or ROOT, exist_ok=True)
     doc.save(out)
     print("saved", docx_name)
 
@@ -506,6 +517,21 @@ META = {
 }
 META2 = dict(META, date="2026年11月16日")
 
+META_ZHOU = {
+    "title": "基于STM32单片机的农业大棚环境检测与远程控制系统的设计与实现",
+    "name": "周少滨",
+    "sid": "2320158124",
+    "college": "工学院",
+    "major": "电气工程及其自动化",
+    "teacher": "曹春妍",
+    "rank": "副教授",
+    "date": "2026年10月30日",
+}
+META_ZHOU2 = dict(META_ZHOU, date="2026年11月16日")
+ZHOU_DIR = "周少滨-农业大棚"
+
 if __name__ == "__main__":
     build("taskbook.md", "1.2320158058_姚凯锐_任务书.docx", "tasktemplate", META)
     build("proposal.md", "2.2320158058_姚凯锐_开题报告.docx", "proposal", META2)
+    build("zhou_taskbook.md", f"{ZHOU_DIR}/1.2320158124_周少滨_任务书.docx", "tasktemplate", META_ZHOU)
+    build("zhou_proposal.md", f"{ZHOU_DIR}/2.2320158124_周少滨_开题报告.docx", "proposal", META_ZHOU2)
